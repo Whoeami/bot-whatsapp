@@ -81,7 +81,6 @@ cron.schedule('*/15 * * * *', async () => {
         const agoraLocalStr = formatadorBrasil.format(agora).replace(' ', 'T');
         const daqui2HorasLocalStr = formatadorBrasil.format(daqui2Horas).replace(' ', 'T');
 
-        // 🚀 CORREÇÃO AQUI: Agora aceita aprovado, Confirmado e confirmado!
         const { data: agendamentos, error } = await supabase
             .from('appointments')
             .select('*')
@@ -208,10 +207,13 @@ app.post('/webhook-pagamento', async (req, res) => {
                 if (supabase) {
                     const { error } = await supabase
                         .from('appointments') 
-                        .update({ status: 'aprovado' }) 
+                        .update({ 
+                            status: 'aprovado',
+                            phone: numeroWhatsApp // 🚀 AGORA ELE SALVA O TELEFONE SOZINHO AQUI!
+                        }) 
                         .eq('client', nomeCliente); 
                     if (error) console.error("❌ Erro ao atualizar o Supabase:", error);
-                    else console.log(`✅ MEMÓRIA ATUALIZADA: Pagamento de ${nomeCliente} salvo como aprovado no banco!`);
+                    else console.log(`✅ MEMÓRIA ATUALIZADA: Pagamento de ${nomeCliente} salvo e telefone preenchido no banco!`);
                 }
 
                 const [result] = await sock.onWhatsApp(numeroWhatsApp);
