@@ -6,12 +6,15 @@ const QRCode = require('qrcode');
 const fs = require('fs');
 const app = express();
 
+app.use(express.json());
+
 let sock;
 let qrCodeImage = null;
 let isConnected = false;
 
 async function connectToWhatsApp() {
-    const { state, saveCreds } = await useMultiFileAuthState('auth_info');
+    // A pasta mudou para 'auth_info_RESET_FINAL' para garantir o reset total
+    const { state, saveCreds } = await useMultiFileAuthState('auth_info_RESET_FINAL');
     
     sock = makeWASocket({
         logger: pino({ level: 'silent' }),
@@ -40,34 +43,27 @@ async function connectToWhatsApp() {
 
 connectToWhatsApp();
 
-// --- PAINEL DE CONTROLE SIMPLES ---
+// --- PAINEL DE CONTROLE ---
 app.get('/', async (req, res) => {
     if (isConnected) {
-        res.send(`
-            <h1>Bot Conectado! ✅</h1>
-            <a href="/logout"><button style="padding:20px; font-size:20px; color:red;">DESCONECTAR BOT</button></a>
-        `);
+        res.send('<h1>Bot Conectado! ✅</h1><a href="/logout">Clique aqui para desconectar e resetar</a>');
     } else if (qrCodeImage) {
-        res.send(`
-            <h1>Escaneie o QR Code abaixo:</h1>
-            <img src="${qrCodeImage}" />
-            <br><br>
-            <p>Se não carregar, atualize a página.</p>
-        `);
+        res.send('<h1>Escaneie o QR Code abaixo:</h1><img src="' + qrCodeImage + '" />');
     } else {
-        res.send('<h1>Bot inicializando... aguarde 10 segundos e atualize.</h1>');
+        res.send('<h1>Bot inicializando... aguarde 30 segundos e atualize a página.</h1>');
     }
 });
 
-// --- ROTA DE LOGOUT (O BOTÃO DE DESLIGAR) ---
+// --- ROTA DE LOGOUT E RESET ---
 app.get('/logout', async (req, res) => {
     if (sock) await sock.logout();
-    if (fs.existsSync('./auth_info')) {
-        fs.rmSync('./auth_info', { recursive: true, force: true });
+    if (fs.existsSync('./auth_info_RESET_FINAL')) {
+        fs.rmSync('./auth_info_RESET_FINAL', { recursive: true, force: true });
     }
     isConnected = false;
-    res.send('<h1>Desconectado! O bot vai reiniciar agora. Aguarde 30 segundos e acesse a página inicial.</h1>');
+    res.send('<h1>Resetado! Aguarde o bot reiniciar sozinho.</h1>');
     setTimeout(() => { process.exit(0); }, 1000);
 });
 
-app.listen(3000, () => console.log('🚀 Rodando na porta 3000'));
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log('🚀 Rodando na porta ' + PORT));
