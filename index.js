@@ -11,7 +11,6 @@ const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Permite que a Vercel acesse o bot sem bloqueios de segurança (CORS)
 app.use(cors({ origin: '*' }));
 
 const clientMP = new MercadoPagoConfig({ accessToken: process.env.MERCADOPAGO_ACCESS_TOKEN });
@@ -51,14 +50,12 @@ async function connectToWhatsApp() {
 
 connectToWhatsApp();
 
-// --- PAINEL E ROTAS ---
 app.get('/', (req, res) => {
     if (isConnected) res.send('<h1>Bot Conectado! ✅</h1><a href="/logout">Resetar Conexão</a>');
     else if (qrCodeImage) res.send('<h1>Escaneie o QR Code:</h1><img src="'+qrCodeImage+'" />');
     else res.send('<h1>Bot inicializando... aguarde 15 segundos e atualize.</h1>');
 });
 
-// Rota para checar se o servidor está acordado
 app.get('/ping', (req, res) => {
     res.send('O bot está ACORDADO e pronto para receber requisições!');
 });
@@ -72,7 +69,6 @@ app.get('/logout', async (req, res) => {
     setTimeout(() => { process.exit(0); }, 1000);
 });
 
-// --- ROTA DO PIX ---
 app.post('/gerar-cobranca', async (req, res) => {
     console.log("📥 Requisição do site RECEBIDA:", req.body);
     
@@ -86,9 +82,7 @@ app.post('/gerar-cobranca', async (req, res) => {
                 transaction_amount: Number(valor.replace(',', '.')),
                 description: `Serviço - ${nome}`,
                 payment_method_id: 'pix',
-                payer: { 
-                    email: 'cliente@barbearia.com' // Correção do Mercado Pago
-                },
+                payer: { email: 'cliente@barbearia.com' },
                 notification_url: 'https://bot-whatsapp-dibb.onrender.com/webhook-pagamento',
                 metadata: { telefone_cliente: telefone, nome_cliente: nome }
             }
@@ -96,15 +90,26 @@ app.post('/gerar-cobranca', async (req, res) => {
 
         const copiaECola = cobranca.point_of_interaction.transaction_data.qr_code;
         
-        // 🚀 CORREÇÃO DO NÚMERO DO WHATSAPP (Adiciona o 55 do Brasil se faltar)
+        // Garante o 55 do Brasil
         let numeroWhatsApp = telefone.toString();
         if (!numeroWhatsApp.startsWith('55')) {
             numeroWhatsApp = '55' + numeroWhatsApp;
         }
 
-        await sock.sendMessage(`${numeroWhatsApp}@s.whatsapp.net`, { text: `Olá *${nome}*! Segue o Pix:\n\n${copiaECola}` });
+        // 🚀 O RADAR: Pergunta ao WhatsApp se o número existe e qual é o ID correto dele
+        const [result] = await sock.onWhatsApp(numeroWhatsApp);
         
-        console.log("✅ Mensagem enviada com sucesso para:", numeroWhatsApp);
+        if (!result || !result.exists) {
+            console.log("❌ ERRO: O WhatsApp disse que esse número não existe lá:", numeroWhatsApp);
+            return res.status(400).json({ erro: 'Número não possui WhatsApp registrado.' });
+        }
+
+        // Usa o número exato que o WhatsApp devolveu (com ou sem o 9)
+        const jidCorreto = result.jid;
+
+        await sock.sendMessage(jidCorreto, { text: `Olá *${nome}*! Segue o Pix:\n\n${copiaECola}` });
+        
+        console.log("✅ Mensagem enviada com sucesso para o JID correto:", jidCorreto);
         res.json({ sucesso: true });
     } catch (e) { 
         console.error("❌ ERRO AO GERAR PIX:", e);
@@ -123,7 +128,12 @@ app.post('/webhook-pagamento', async (req, res) => {
                 if (!numeroWhatsApp.startsWith('55')) {
                     numeroWhatsApp = '55' + numeroWhatsApp;
                 }
-                await sock.sendMessage(`${numeroWhatsApp}@s.whatsapp.net`, { text: 'Pagamento confirmado! 🎉 Seu agendamento está garantido.' });
+                
+                // Radar também no webhook
+                const [result] = await sock.onWhatsApp(numeroWhatsApp);
+                if (result && result.exists) {
+                    await sock.sendMessage(result.jid, { text: 'Pagamento confirmado! 🎉 Seu agendamento está garantido.' });
+                }
             }
         } catch(e) { console.log(e); }
     }
