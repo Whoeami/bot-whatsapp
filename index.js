@@ -6,7 +6,7 @@ const QRCode = require('qrcode');
 const fs = require('fs');
 const cors = require('cors');
 const { MercadoPagoConfig, Payment } = require('mercadopago');
-const { createClient } = require('@supabase/supabase-js'); // 🚀 NOVA BIBLIOTECA DA FASE 1
+const { createClient } = require('@supabase/supabase-js');
 
 const app = express();
 app.use(express.json());
@@ -17,10 +17,17 @@ app.use(cors({ origin: '*' }));
 const clientMP = new MercadoPagoConfig({ accessToken: process.env.MERCADOPAGO_ACCESS_TOKEN });
 const payment = new Payment(clientMP);
 
-// Configuração Supabase (O Bot agora tem memória)
-const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseKey = process.env.SUPABASE_KEY;
-const supabase = createClient(supabaseUrl, supabaseKey);
+// 🚀 BLINDAGEM DO SUPABASE: Só conecta se as chaves existirem de verdade
+const supabaseUrl = process.env.SUPABASE_URL ? process.env.SUPABASE_URL.trim() : null;
+const supabaseKey = process.env.SUPABASE_KEY ? process.env.SUPABASE_KEY.trim() : null;
+
+let supabase = null;
+if (supabaseUrl && supabaseKey) {
+    supabase = createClient(supabaseUrl, supabaseKey);
+    console.log('✅ Banco de Dados (Supabase) configurado e pronto para uso!');
+} else {
+    console.log('⚠️ AVISO: SUPABASE_URL ou SUPABASE_KEY não encontradas. O bot de Pix vai funcionar, mas não vai salvar a memória no banco.');
+}
 
 let sock;
 let qrCodeImage = null;
@@ -139,19 +146,20 @@ app.post('/webhook-pagamento', async (req, res) => {
                     numeroWhatsApp = '55' + numeroWhatsApp;
                 }
                 
-                // 🚀 FASE 1 NA PRÁTICA: Atualiza o Banco de Dados
-                const { error } = await supabase
-                    .from('appointments') // Procura na tabela de agendamentos
-                    .update({ status: 'aprovado' }) // Altera o status para aprovado
-                    .eq('client', nomeCliente); // Encontra a linha certa pelo nome do cliente
+                // Só tenta atualizar o banco se as credenciais do Supabase estiverem ok
+                if (supabase) {
+                    const { error } = await supabase
+                        .from('appointments') 
+                        .update({ status: 'aprovado' }) 
+                        .eq('client', nomeCliente); 
 
-                if (error) {
-                    console.error("❌ Erro ao atualizar o Supabase:", error);
-                } else {
-                    console.log(`✅ MEMÓRIA ATUALIZADA: Pagamento de ${nomeCliente} salvo como aprovado no banco!`);
+                    if (error) {
+                        console.error("❌ Erro ao atualizar o Supabase:", error);
+                    } else {
+                        console.log(`✅ MEMÓRIA ATUALIZADA: Pagamento de ${nomeCliente} salvo como aprovado no banco!`);
+                    }
                 }
 
-                // Radar e Envio do Zap
                 const [result] = await sock.onWhatsApp(numeroWhatsApp);
                 if (result && result.exists) {
                     await sock.sendMessage(result.jid, { text: 'Pagamento confirmado! 🎉 Seu agendamento está garantido e atualizado em nosso sistema.' });
