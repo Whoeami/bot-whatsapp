@@ -2,7 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const { makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
 const pino = require('pino');
-const qrcode = require('qrcode-terminal'); // Corrigido para qrcode-terminal
+const QRCode = require('qrcode'); // Usando a biblioteca padrão
 const cors = require('cors');
 const { MercadoPagoConfig, Payment } = require('mercadopago');
 
@@ -19,7 +19,6 @@ const payment = new Payment(clientMP);
 
 let sock;
 
-// Configuração do WhatsApp (Baileys)
 async function connectToWhatsApp() {
     const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys');
     
@@ -29,12 +28,14 @@ async function connectToWhatsApp() {
         browser: ['BarbeariaBot', 'Chrome', '1.0.0']
     });
 
-    sock.ev.on('connection.update', (update) => {
+    sock.ev.on('connection.update', async (update) => {
         const { connection, lastDisconnect, qr } = update;
         
         if (qr) {
             console.log('\n📱 Escaneie este QR Code no seu WhatsApp:');
-            qrcode.generate(qr, { small: true });
+            // Usando o toString com 'terminal' para gerar um QR Code mais estável
+            const qrTerminal = await QRCode.toString(qr, { type: 'terminal', small: true });
+            console.log(qrTerminal);
         }
         
         if (connection === 'close') {
