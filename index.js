@@ -64,7 +64,7 @@ connectToWhatsApp();
 
 // =========================================================
 // 🚀 FASE 2: O ROBÔ VIGILANTE (Lembrete Antifalta)
-// Roda a cada 15 minutos para procurar agendamentos próximos
+// Roda a cada 15 minutos
 // =========================================================
 cron.schedule('*/15 * * * *', async () => {
     if (!supabase || !isConnected) return;
@@ -131,6 +131,60 @@ cron.schedule('*/15 * * * *', async () => {
     }
 });
 
+// =========================================================
+// 🚀 FASE 3: ROBÔ DE FEEDBACK (Roda todo dia às 09:00)
+// =========================================================
+cron.schedule('0 9 * * *', async () => {
+    if (!supabase || !isConnected) return;
+
+    console.log('⭐ [CRON] Buscando clientes para pedir feedback...');
+    
+    try {
+        const ontem = new Date();
+        ontem.setDate(ontem.getDate() - 1); // Pega o dia de ontem
+        const dataOntem = ontem.toISOString().split('T')[0];
+
+        // Busca agendamentos de ontem concluídos que ainda não receberam feedback
+        const { data: agendamentos, error } = await supabase
+            .from('appointments')
+            .select('*')
+            .eq('status', 'Concluído')
+            .eq('feedback_enviado', false)
+            .gte('time', `${dataOntem}T00:00:00`)
+            .lte('time', `${dataOntem}T23:59:59`);
+
+        if (error) throw error;
+
+        if (agendamentos && agendamentos.length > 0) {
+            for (const agendamento of agendamentos) {
+                const telefoneCliente = agendamento.phone || agendamento.telefone || agendamento.whatsapp;
+                if (!telefoneCliente) continue;
+
+                // ⚠️ TROQUE AQUI PELO SEU LINK REAL
+                const linkAvaliacao = "https://g.page/r/CY060O6MsL4dEAE/review"; 
+
+                const mensagem = `Olá, *${agendamento.client}*! 👋\n\nPassando para saber o que achou do atendimento aqui na barbearia ontem.\n\nSua opinião nos ajuda a sempre melhorar! Poderia deixar uma avaliação rápida pra gente aqui? 👇\n\n${linkAvaliacao}\n\nObrigado!`;
+                
+                let numeroWhatsApp = telefoneCliente.toString();
+                if (!numeroWhatsApp.startsWith('55')) numeroWhatsApp = '55' + numeroWhatsApp;
+
+                const [result] = await sock.onWhatsApp(numeroWhatsApp);
+                if (result && result.exists) {
+                    await sock.sendMessage(result.jid, { text: mensagem });
+                    console.log(`⭐ Feedback enviado para ${agendamento.client}`);
+
+                    await supabase
+                        .from('appointments')
+                        .update({ feedback_enviado: true })
+                        .eq('id', agendamento.id);
+                }
+            }
+        }
+    } catch (e) {
+        console.error('❌ ERRO NO CRON DE FEEDBACK:', e);
+    }
+});
+
 
 // =========================================================
 // PAINEL E ROTAS DA API
@@ -153,8 +207,6 @@ app.get('/logout', async (req, res) => {
 });
 
 app.post('/gerar-cobranca', async (req, res) => {
-    console.log("📥 Requisição do site RECEBIDA:", req.body);
-    
     const { telefone, nome, valor } = req.body;
     try {
         if (!sock || !isConnected) return res.status(500).json({ erro: 'Bot não conectado' });
@@ -184,10 +236,8 @@ app.post('/gerar-cobranca', async (req, res) => {
         await sock.sendMessage(jidCorreto, { text: mensagemTexto });
         await sock.sendMessage(jidCorreto, { text: copiaECola });
         
-        console.log("✅ Mensagens enviadas com sucesso com a nova formatação!");
         res.json({ sucesso: true });
     } catch (e) { 
-        console.error("❌ ERRO AO GERAR PIX:", e);
         res.status(500).json({ erro: e.message }); 
     }
 });
@@ -205,20 +255,18 @@ app.post('/webhook-pagamento', async (req, res) => {
                 if (!numeroWhatsApp.startsWith('55')) numeroWhatsApp = '55' + numeroWhatsApp;
                 
                 if (supabase) {
-                    const { error } = await supabase
+                    await supabase
                         .from('appointments') 
                         .update({ 
                             status: 'aprovado',
-                            phone: numeroWhatsApp // 🚀 AGORA ELE SALVA O TELEFONE SOZINHO AQUI!
+                            phone: numeroWhatsApp
                         }) 
                         .eq('client', nomeCliente); 
-                    if (error) console.error("❌ Erro ao atualizar o Supabase:", error);
-                    else console.log(`✅ MEMÓRIA ATUALIZADA: Pagamento de ${nomeCliente} salvo e telefone preenchido no banco!`);
                 }
 
                 const [result] = await sock.onWhatsApp(numeroWhatsApp);
                 if (result && result.exists) {
-                    await sock.sendMessage(result.jid, { text: 'Pagamento confirmado! 🎉 Seu agendamento está garantido e atualizado em nosso sistema.' });
+                    await sock.sendMessage(result.jid, { text: 'Pagamento confirmado! 🎉 Seu agendamento está garantido.' });
                 }
             }
         } catch(e) { console.log(e); }
