@@ -95,9 +95,16 @@ app.post('/gerar-cobranca', async (req, res) => {
         });
 
         const copiaECola = cobranca.point_of_interaction.transaction_data.qr_code;
-        await sock.sendMessage(`${telefone}@s.whatsapp.net`, { text: `Olá *${nome}*! Segue o Pix:\n\n${copiaECola}` });
         
-        console.log("✅ Mensagem enviada para o WhatsApp:", telefone);
+        // 🚀 CORREÇÃO DO NÚMERO DO WHATSAPP (Adiciona o 55 do Brasil se faltar)
+        let numeroWhatsApp = telefone.toString();
+        if (!numeroWhatsApp.startsWith('55')) {
+            numeroWhatsApp = '55' + numeroWhatsApp;
+        }
+
+        await sock.sendMessage(`${numeroWhatsApp}@s.whatsapp.net`, { text: `Olá *${nome}*! Segue o Pix:\n\n${copiaECola}` });
+        
+        console.log("✅ Mensagem enviada com sucesso para:", numeroWhatsApp);
         res.json({ sucesso: true });
     } catch (e) { 
         console.error("❌ ERRO AO GERAR PIX:", e);
@@ -112,8 +119,11 @@ app.post('/webhook-pagamento', async (req, res) => {
         try {
             const dados = await payment.get({ id: pagamentoId });
             if (dados.status === 'approved') {
-                const { telefone_cliente } = dados.metadata;
-                await sock.sendMessage(`${telefone_cliente}@s.whatsapp.net`, { text: 'Pagamento confirmado! 🎉' });
+                let numeroWhatsApp = dados.metadata.telefone_cliente.toString();
+                if (!numeroWhatsApp.startsWith('55')) {
+                    numeroWhatsApp = '55' + numeroWhatsApp;
+                }
+                await sock.sendMessage(`${numeroWhatsApp}@s.whatsapp.net`, { text: 'Pagamento confirmado! 🎉 Seu agendamento está garantido.' });
             }
         } catch(e) { console.log(e); }
     }
