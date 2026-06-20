@@ -6,15 +6,21 @@ const QRCode = require('qrcode');
 const fs = require('fs');
 const cors = require('cors');
 const { MercadoPagoConfig, Payment } = require('mercadopago');
+const { createClient } = require('@supabase/supabase-js'); // 🚀 NOVA BIBLIOTECA DA FASE 1
 
 const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-
 app.use(cors({ origin: '*' }));
 
+// Configuração Mercado Pago
 const clientMP = new MercadoPagoConfig({ accessToken: process.env.MERCADOPAGO_ACCESS_TOKEN });
 const payment = new Payment(clientMP);
+
+// Configuração Supabase (O Bot agora tem memória)
+const supabaseUrl = process.env.SUPABASE_URL;
+const supabaseKey = process.env.SUPABASE_KEY;
+const supabase = createClient(supabaseUrl, supabaseKey);
 
 let sock;
 let qrCodeImage = null;
@@ -104,13 +110,9 @@ app.post('/gerar-cobranca', async (req, res) => {
 
         const jidCorreto = result.jid;
 
-        // 🚀 FORMATAÇÃO CORRIGIDA: Envia o texto primeiro e o código Pix depois
         const mensagemTexto = `Olá, *${nome}*! 👋\n\nSeu horário foi reservado com sucesso. O valor do serviço é de *R$ ${valor}*.\n\nPara confirmar, copie o código Pix na mensagem abaixo e cole no aplicativo do seu banco.\n\n_Após o pagamento, o nosso sistema confirmará automaticamente._`;
         
-        // 1ª Mensagem: O texto explicativo
         await sock.sendMessage(jidCorreto, { text: mensagemTexto });
-        
-        // 2ª Mensagem: O código Copia e Cola sozinho para facilitar a cópia
         await sock.sendMessage(jidCorreto, { text: copiaECola });
         
         console.log("✅ Mensagens enviadas com sucesso com a nova formatação!");
@@ -124,18 +126,35 @@ app.post('/gerar-cobranca', async (req, res) => {
 app.post('/webhook-pagamento', async (req, res) => {
     const acao = req.body?.action;
     const pagamentoId = req.body?.data?.id;
+    
     if (acao === 'payment.created' && pagamentoId) {
         try {
             const dados = await payment.get({ id: pagamentoId });
+            
             if (dados.status === 'approved') {
+                const nomeCliente = dados.metadata.nome_cliente;
                 let numeroWhatsApp = dados.metadata.telefone_cliente.toString();
+                
                 if (!numeroWhatsApp.startsWith('55')) {
                     numeroWhatsApp = '55' + numeroWhatsApp;
                 }
                 
+                // 🚀 FASE 1 NA PRÁTICA: Atualiza o Banco de Dados
+                const { error } = await supabase
+                    .from('appointments') // Procura na tabela de agendamentos
+                    .update({ status: 'aprovado' }) // Altera o status para aprovado
+                    .eq('client', nomeCliente); // Encontra a linha certa pelo nome do cliente
+
+                if (error) {
+                    console.error("❌ Erro ao atualizar o Supabase:", error);
+                } else {
+                    console.log(`✅ MEMÓRIA ATUALIZADA: Pagamento de ${nomeCliente} salvo como aprovado no banco!`);
+                }
+
+                // Radar e Envio do Zap
                 const [result] = await sock.onWhatsApp(numeroWhatsApp);
                 if (result && result.exists) {
-                    await sock.sendMessage(result.jid, { text: 'Pagamento confirmado! 🎉 Seu agendamento está garantido.' });
+                    await sock.sendMessage(result.jid, { text: 'Pagamento confirmado! 🎉 Seu agendamento está garantido e atualizado em nosso sistema.' });
                 }
             }
         } catch(e) { console.log(e); }
