@@ -7,7 +7,7 @@ const fs = require('fs');
 const cors = require('cors');
 const { MercadoPagoConfig, Payment } = require('mercadopago');
 const { createClient } = require('@supabase/supabase-js');
-const cron = require('node-cron'); // 🚀 NOVA BIBLIOTECA DA FASE 2
+const cron = require('node-cron');
 
 const app = express();
 app.use(express.json());
@@ -67,7 +67,7 @@ connectToWhatsApp();
 // Roda a cada 15 minutos para procurar agendamentos próximos
 // =========================================================
 cron.schedule('*/15 * * * *', async () => {
-    if (!supabase || !isConnected) return; // Só roda se tiver banco de dados e zap conectados
+    if (!supabase || !isConnected) return;
 
     console.log('⏰ [CRON] Buscando clientes para enviar lembrete de agendamento...');
     
@@ -75,21 +75,20 @@ cron.schedule('*/15 * * * *', async () => {
         const agora = new Date();
         const daqui2Horas = new Date(agora.getTime() + 2 * 60 * 60 * 1000);
 
-        // Força o fuso horário do Brasil para bater exatamente com a sua coluna "time"
         const opcoesFuso = { timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' };
         const formatadorBrasil = new Intl.DateTimeFormat('sv-SE', opcoesFuso);
         
-        // Converte a data para o formato "2026-06-20T14:30:00"
         const agoraLocalStr = formatadorBrasil.format(agora).replace(' ', 'T');
         const daqui2HorasLocalStr = formatadorBrasil.format(daqui2Horas).replace(' ', 'T');
 
+        // 🚀 CORREÇÃO AQUI: Agora aceita aprovado, Confirmado e confirmado!
         const { data: agendamentos, error } = await supabase
             .from('appointments')
             .select('*')
-            .eq('status', 'aprovado') // O status deve estar aprovado/pago
-            .eq('lembrete_enviado', false) // Não pode ter recebido lembrete ainda
-            .gte('time', agoraLocalStr) // O horário do corte é maior que agora
-            .lte('time', daqui2HorasLocalStr); // O horário do corte é daqui a 2 horas no máximo
+            .in('status', ['aprovado', 'Confirmado', 'confirmado']) 
+            .eq('lembrete_enviado', false)
+            .gte('time', agoraLocalStr)
+            .lte('time', daqui2HorasLocalStr);
 
         if (error) throw error;
 
@@ -97,15 +96,13 @@ cron.schedule('*/15 * * * *', async () => {
             console.log(`⏰ [CRON] Encontrei ${agendamentos.length} cliente(s) para avisar!`);
 
             for (const agendamento of agendamentos) {
-                // Pega o telefone (tenta as variações comuns de nome de coluna)
                 const telefoneCliente = agendamento.phone || agendamento.telefone || agendamento.whatsapp; 
                 
                 if (!telefoneCliente) {
-                    console.log(`⚠️ ERRO: Agendamento de ${agendamento.client} não tem coluna de telefone preenchida no banco.`);
+                    console.log(`⚠️ ERRO: Agendamento de ${agendamento.client} não tem telefone preenchido no banco.`);
                     continue;
                 }
 
-                // Extrai apenas a hora do corte (ex: 14:30) para ficar bonito no texto
                 const horaFormatada = agendamento.time.split('T')[1].substring(0, 5);
 
                 let numeroWhatsApp = telefoneCliente.toString();
@@ -113,7 +110,6 @@ cron.schedule('*/15 * * * *', async () => {
                     numeroWhatsApp = '55' + numeroWhatsApp;
                 }
 
-                // Radar de Validação do WhatsApp
                 const [result] = await sock.onWhatsApp(numeroWhatsApp);
                 
                 if (result && result.exists) {
@@ -122,7 +118,6 @@ cron.schedule('*/15 * * * *', async () => {
                     await sock.sendMessage(result.jid, { text: mensagemLembrete });
                     console.log(`✅ Lembrete enviado com sucesso para ${agendamento.client} (${horaFormatada})`);
 
-                    // Atualiza o banco marcando que já enviou
                     await supabase
                         .from('appointments')
                         .update({ lembrete_enviado: true })
