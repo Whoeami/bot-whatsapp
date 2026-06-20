@@ -15,10 +15,10 @@ const clientMP = new MercadoPagoConfig({ accessToken: process.env.MERCADOPAGO_AC
 const payment = new Payment(clientMP);
 
 let sock;
+let currentQR = null; // Variável para guardar o QR Code atual
 
 async function connectToWhatsApp() {
-    // Pasta 3 para garantir conexão limpa
-    const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys_3');
+    const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys_4');
     
     sock = makeWASocket({
         logger: pino({ level: 'silent' }),
@@ -30,22 +30,16 @@ async function connectToWhatsApp() {
         const { connection, lastDisconnect, qr } = update;
         
         if (qr) {
-            console.log('\n=========================================');
-            console.log('📱 QR CODE GERADO COM SUCESSO');
-            console.log('Se o desenho abaixo estiver ruim, COPIE O CÓDIGO ABAIXO e cole em um site gerador de QR.');
-            console.log('CÓDIGO PARA COPIAR:', qr);
-            console.log('=========================================\n');
-            
-            // Tenta desenhar, mas sem estresse se ficar feio
-            const qrTerminal = await QRCode.toString(qr, { type: 'terminal', small: true, errorCorrectionLevel: 'L' });
-            console.log(qrTerminal);
+            currentQR = qr; // Salva o código para exibir no site
+            console.log('\n📱 QR Code gerado! Acesse: https://bot-whatsapp-dibb.onrender.com/qrcode');
         }
         
         if (connection === 'close') {
             const shouldReconnect = lastDisconnect.error?.output?.statusCode !== DisconnectReason.loggedOut;
             if (shouldReconnect) connectToWhatsApp();
         } else if (connection === 'open') {
-            console.log('✅ Robô Conectado com Sucesso!');
+            console.log('✅ Robô Conectado!');
+            currentQR = null; // Limpa o QR Code após conectar
         }
     });
 
@@ -53,6 +47,18 @@ async function connectToWhatsApp() {
 }
 
 connectToWhatsApp();
+
+// ROTA NOVO: Página do QR Code
+app.get('/qrcode', async (req, res) => {
+    if (!currentQR) return res.send('<h1>O bot já está conectado ou aguardando gerar QR...</h1>');
+    
+    try {
+        const url = await QRCode.toDataURL(currentQR);
+        res.send(`<h1>Escaneie este QR Code:</h1><img src="${url}" />`);
+    } catch (err) {
+        res.status(500).send('Erro ao gerar imagem.');
+    }
+});
 
 app.post('/gerar-cobranca', async (req, res) => {
     const { telefone, nome, valor } = req.body;
