@@ -17,7 +17,8 @@ const payment = new Payment(clientMP);
 let sock;
 
 async function connectToWhatsApp() {
-    const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys');
+    // Pasta 3 para garantir conexão limpa
+    const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys_3');
     
     sock = makeWASocket({
         logger: pino({ level: 'silent' }),
@@ -29,11 +30,15 @@ async function connectToWhatsApp() {
         const { connection, lastDisconnect, qr } = update;
         
         if (qr) {
-            console.log('\n📱 QR Code gerado. Tente ler o desenho abaixo:');
+            console.log('\n=========================================');
+            console.log('📱 QR CODE GERADO COM SUCESSO');
+            console.log('Se o desenho abaixo estiver ruim, COPIE O CÓDIGO ABAIXO e cole em um site gerador de QR.');
+            console.log('CÓDIGO PARA COPIAR:', qr);
+            console.log('=========================================\n');
+            
+            // Tenta desenhar, mas sem estresse se ficar feio
             const qrTerminal = await QRCode.toString(qr, { type: 'terminal', small: true, errorCorrectionLevel: 'L' });
             console.log(qrTerminal);
-            console.log('\n📱 Se o desenho acima estiver deformado, use este código abaixo em um gerador de QR online:');
-            console.log(qr);
         }
         
         if (connection === 'close') {
