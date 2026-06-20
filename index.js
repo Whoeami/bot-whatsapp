@@ -3,23 +3,15 @@ const express = require('express');
 const { makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
 const pino = require('pino');
 const QRCode = require('qrcode');
-const cors = require('cors');
-const { MercadoPagoConfig, Payment } = require('mercadopago');
 const fs = require('fs');
-
 const app = express();
-app.use(express.json());
-app.use(cors());
-
-const clientMP = new MercadoPagoConfig({ accessToken: process.env.MERCADOPAGO_ACCESS_TOKEN });
-const payment = new Payment(clientMP);
 
 let sock;
-let currentQR = null;
+let qrCodeImage = null;
+let isConnected = false;
 
 async function connectToWhatsApp() {
-    // Usaremos uma pasta fixa, mas vamos deletá-la se precisar
-    const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys');
+    const { state, saveCreds } = await useMultiFileAuthState('auth_info');
     
     sock = makeWASocket({
         logger: pino({ level: 'silent' }),
@@ -28,18 +20,18 @@ async function connectToWhatsApp() {
     });
 
     sock.ev.on('connection.update', async (update) => {
-        const { connection, lastDisconnect, qr } = update;
-        
+        const { connection, qr } = update;
         if (qr) {
-            currentQR = qr;
+            isConnected = false;
+            qrCodeImage = await QRCode.toDataURL(qr);
         }
-        
-        if (connection === 'close') {
-            const shouldReconnect = lastDisconnect.error?.output?.statusCode !== DisconnectReason.loggedOut;
-            if (shouldReconnect) connectToWhatsApp();
-        } else if (connection === 'open') {
-            console.log('✅ Robô Conectado!');
-            currentQR = null;
+        if (connection === 'open') {
+            isConnected = true;
+            qrCodeImage = null;
+            console.log('✅ Conectado!');
+        } else if (connection === 'close') {
+            isConnected = false;
+            connectToWhatsApp();
         }
     });
 
@@ -48,41 +40,34 @@ async function connectToWhatsApp() {
 
 connectToWhatsApp();
 
-// --- O BOTÃO NUCLEAR DE RESET ---
-app.get('/logout', async (req, res) => {
-    try {
-        console.log('⚠️ Solicitado logout e reset total...');
-        if (sock) {
-            try { await sock.logout(); } catch(e) {}
-        }
-        
-        // Apaga a pasta de sessão
-        if (fs.existsSync('./auth_info_baileys')) {
-            fs.rmSync('./auth_info_baileys', { recursive: true, force: true });
-        }
-        
-        res.send('<h1>Sistema Resetado. O bot vai reiniciar agora...</h1>');
-        
-        // FORÇA O REINÍCIO DO RENDER
-        setTimeout(() => { process.exit(0); }, 1000);
-        
-    } catch (e) {
-        res.send('Erro no reset: ' + e.message);
+// --- PAINEL DE CONTROLE SIMPLES ---
+app.get('/', async (req, res) => {
+    if (isConnected) {
+        res.send(`
+            <h1>Bot Conectado! ✅</h1>
+            <a href="/logout"><button style="padding:20px; font-size:20px; color:red;">DESCONECTAR BOT</button></a>
+        `);
+    } else if (qrCodeImage) {
+        res.send(`
+            <h1>Escaneie o QR Code abaixo:</h1>
+            <img src="${qrCodeImage}" />
+            <br><br>
+            <p>Se não carregar, atualize a página.</p>
+        `);
+    } else {
+        res.send('<h1>Bot inicializando... aguarde 10 segundos e atualize.</h1>');
     }
 });
 
-// --- ROTA QR CODE ---
-app.get('/qrcode', async (req, res) => {
-    if (!currentQR) return res.send('<h1>O bot já está conectado ou aguardando gerar QR. Se você acabou de resetar, espere 10 segundos e atualize a página.</h1>');
-    try {
-        const url = await QRCode.toDataURL(currentQR);
-        res.send(`<h1>Escaneie este QR Code:</h1><img src="${url}" />`);
-    } catch (err) { res.status(500).send('Erro ao gerar imagem.'); }
+// --- ROTA DE LOGOUT (O BOTÃO DE DESLIGAR) ---
+app.get('/logout', async (req, res) => {
+    if (sock) await sock.logout();
+    if (fs.existsSync('./auth_info')) {
+        fs.rmSync('./auth_info', { recursive: true, force: true });
+    }
+    isConnected = false;
+    res.send('<h1>Desconectado! O bot vai reiniciar agora. Aguarde 30 segundos e acesse a página inicial.</h1>');
+    setTimeout(() => { process.exit(0); }, 1000);
 });
 
-// ... (Rotas de pagamento permanecem iguais)
-app.post('/gerar-cobranca', async (req, res) => { /* ... */ });
-app.post('/webhook-pagamento', async (req, res) => { /* ... */ });
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`🚀 Motor ativo na porta ${PORT}`));
+app.listen(3000, () => console.log('🚀 Rodando na porta 3000'));
