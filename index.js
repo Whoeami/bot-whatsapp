@@ -22,7 +22,6 @@ let qrCodeImage = null;
 let isConnected = false;
 
 async function connectToWhatsApp() {
-    // Nome novo para forçar a criação de um QR Code fresco hoje
     const { state, saveCreds } = await useMultiFileAuthState('auth_info_RESET_SABADO');
     
     sock = makeWASocket({
@@ -87,6 +86,9 @@ app.post('/gerar-cobranca', async (req, res) => {
                 transaction_amount: Number(valor.replace(',', '.')),
                 description: `Serviço - ${nome}`,
                 payment_method_id: 'pix',
+                payer: { 
+                    email: 'cliente@barbearia.com' // Correção do Mercado Pago
+                },
                 notification_url: 'https://bot-whatsapp-dibb.onrender.com/webhook-pagamento',
                 metadata: { telefone_cliente: telefone, nome_cliente: nome }
             }
