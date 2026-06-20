@@ -5,7 +5,7 @@ const pino = require('pino');
 const QRCode = require('qrcode');
 const cors = require('cors');
 const { MercadoPagoConfig, Payment } = require('mercadopago');
-const fs = require('fs'); // Adicionado para poder apagar a pasta
+const fs = require('fs');
 
 const app = express();
 app.use(express.json());
@@ -15,9 +15,11 @@ const clientMP = new MercadoPagoConfig({ accessToken: process.env.MERCADOPAGO_AC
 const payment = new Payment(clientMP);
 
 let sock;
+let currentQR = null;
 
 async function connectToWhatsApp() {
-    const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys_4');
+    // Usaremos uma pasta fixa, mas vamos deletá-la se precisar
+    const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys');
     
     sock = makeWASocket({
         logger: pino({ level: 'silent' }),
@@ -46,33 +48,39 @@ async function connectToWhatsApp() {
 
 connectToWhatsApp();
 
-// --- NOVA ROTA: LOGOUT ---
+// --- O BOTÃO NUCLEAR DE RESET ---
 app.get('/logout', async (req, res) => {
     try {
+        console.log('⚠️ Solicitado logout e reset total...');
         if (sock) {
-            await sock.logout(); // Desconecta do WhatsApp
+            try { await sock.logout(); } catch(e) {}
         }
-        // Apaga a pasta de sessão para garantir que não vai reconectar sozinho
-        if (fs.existsSync('./auth_info_baileys_4')) {
-            fs.rmSync('./auth_info_baileys_4', { recursive: true, force: true });
+        
+        // Apaga a pasta de sessão
+        if (fs.existsSync('./auth_info_baileys')) {
+            fs.rmSync('./auth_info_baileys', { recursive: true, force: true });
         }
-        res.send('<h1>Desconectado com sucesso! Agora reinicie o serviço no Render para gerar um novo QR Code.</h1>');
+        
+        res.send('<h1>Sistema Resetado. O bot vai reiniciar agora...</h1>');
+        
+        // FORÇA O REINÍCIO DO RENDER
+        setTimeout(() => { process.exit(0); }, 1000);
+        
     } catch (e) {
-        res.send('Erro ao desconectar: ' + e.message);
+        res.send('Erro no reset: ' + e.message);
     }
 });
 
 // --- ROTA QR CODE ---
-let currentQR = null;
 app.get('/qrcode', async (req, res) => {
-    if (!currentQR) return res.send('<h1>O bot já está conectado ou aguardando gerar QR...</h1>');
+    if (!currentQR) return res.send('<h1>O bot já está conectado ou aguardando gerar QR. Se você acabou de resetar, espere 10 segundos e atualize a página.</h1>');
     try {
         const url = await QRCode.toDataURL(currentQR);
         res.send(`<h1>Escaneie este QR Code:</h1><img src="${url}" />`);
     } catch (err) { res.status(500).send('Erro ao gerar imagem.'); }
 });
 
-// ... (O restante das rotas de pagamento continua igual)
+// ... (Rotas de pagamento permanecem iguais)
 app.post('/gerar-cobranca', async (req, res) => { /* ... */ });
 app.post('/webhook-pagamento', async (req, res) => { /* ... */ });
 
