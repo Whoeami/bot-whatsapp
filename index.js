@@ -185,6 +185,47 @@ cron.schedule('0 9 * * *', async () => {
     }
 });
 
+// =========================================================
+// 🚀 FASE 4: ROBÔ DO PIX ESQUECIDO (Roda a cada 1 hora)
+// =========================================================
+cron.schedule('0 * * * *', async () => {
+    if (!supabase || !isConnected) return;
+
+    console.log('💰 [CRON] Buscando Pix pendentes para recuperar...');
+    
+    try {
+        const umaHoraAtras = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+
+        const { data: agendamentos, error } = await supabase
+            .from('appointments')
+            .select('*')
+            .eq('status', 'Pendente')
+            .lt('created_at', umaHoraAtras);
+
+        if (error) throw error;
+
+        if (agendamentos && agendamentos.length > 0) {
+            for (const agendamento of agendamentos) {
+                const telefoneCliente = agendamento.phone || agendamento.telefone || agendamento.whatsapp;
+                if (!telefoneCliente) continue;
+
+                const mensagem = `Olá, *${agendamento.client}*! 👋\n\nNotei que você gerou um agendamento com a gente, mas o Pix ainda não foi confirmado.\n\nO seu horário só é garantido após a confirmação do pagamento. Quer que eu te envie o código Pix novamente? 😉`;
+                
+                let numeroWhatsApp = telefoneCliente.toString();
+                if (!numeroWhatsApp.startsWith('55')) numeroWhatsApp = '55' + numeroWhatsApp;
+
+                const [result] = await sock.onWhatsApp(numeroWhatsApp);
+                if (result && result.exists) {
+                    await sock.sendMessage(result.jid, { text: mensagem });
+                    console.log(`💰 Pix esquecido lembrado para ${agendamento.client}`);
+                }
+            }
+        }
+    } catch (e) {
+        console.error('❌ ERRO NO CRON DO PIX:', e);
+    }
+});
+
 
 // =========================================================
 // PAINEL E ROTAS DA API
@@ -207,6 +248,8 @@ app.get('/logout', async (req, res) => {
 });
 
 app.post('/gerar-cobranca', async (req, res) => {
+    console.log("📥 Requisição do site RECEBIDA:", req.body);
+    
     const { telefone, nome, valor } = req.body;
     try {
         if (!sock || !isConnected) return res.status(500).json({ erro: 'Bot não conectado' });
@@ -236,8 +279,10 @@ app.post('/gerar-cobranca', async (req, res) => {
         await sock.sendMessage(jidCorreto, { text: mensagemTexto });
         await sock.sendMessage(jidCorreto, { text: copiaECola });
         
+        console.log("✅ Mensagens enviadas com sucesso com a nova formatação!");
         res.json({ sucesso: true });
     } catch (e) { 
+        console.error("❌ ERRO AO GERAR PIX:", e);
         res.status(500).json({ erro: e.message }); 
     }
 });
@@ -255,18 +300,20 @@ app.post('/webhook-pagamento', async (req, res) => {
                 if (!numeroWhatsApp.startsWith('55')) numeroWhatsApp = '55' + numeroWhatsApp;
                 
                 if (supabase) {
-                    await supabase
+                    const { error } = await supabase
                         .from('appointments') 
                         .update({ 
                             status: 'aprovado',
-                            phone: numeroWhatsApp
+                            phone: numeroWhatsApp // 🚀 AGORA ELE SALVA O TELEFONE SOZINHO AQUI!
                         }) 
                         .eq('client', nomeCliente); 
+                    if (error) console.error("❌ Erro ao atualizar o Supabase:", error);
+                    else console.log(`✅ MEMÓRIA ATUALIZADA: Pagamento de ${nomeCliente} salvo e telefone preenchido no banco!`);
                 }
 
                 const [result] = await sock.onWhatsApp(numeroWhatsApp);
                 if (result && result.exists) {
-                    await sock.sendMessage(result.jid, { text: 'Pagamento confirmado! 🎉 Seu agendamento está garantido.' });
+                    await sock.sendMessage(result.jid, { text: 'Pagamento confirmado! 🎉 Seu agendamento está garantido e atualizado em nosso sistema.' });
                 }
             }
         } catch(e) { console.log(e); }
