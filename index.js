@@ -12,7 +12,73 @@ const cron = require('node-cron');
 const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-app.use(cors({ origin: '*' }));
+
+// =========================================================
+// 🛡️ CONFIGURAÇÃO DE SEGURANÇA AVANÇADA (CORS E ANTI-SPAM)
+// =========================================================
+
+// 1. Defina aqui quais sites podem acessar o seu servidor
+const URLsPermitidas = [
+    'http://localhost:5173', // Permite que você teste no seu computador local (Vite)
+    'https://bot-whatsapp-dibb.onrender.com', // O próprio servidor do Render
+    'https://suabarbearia.com.br' // ⚠️ TROQUE ISSO PELO LINK OFICIAL DO SEU SITE DEPOIS
+];
+
+app.use(cors({
+    origin: function (origin, callback) {
+        // Permite requisições sem origem (como o próprio servidor fazendo testes internos)
+        if (!origin) return callback(null, true);
+        
+        // Verifica se o site que está chamando começa com alguma das URLs permitidas
+        const permitido = URLsPermitidas.some(url => origin.startsWith(url));
+        if (permitido) {
+            return callback(null, true);
+        } else {
+            console.log(`🚨 BLOQUEIO CORS: Site não autorizado tentou acessar a API: ${origin}`);
+            return callback(new Error('Acesso bloqueado por segurança (CORS)'), false);
+        }
+    }
+}));
+
+// 2. Sistema nativo de proteção contra ataques de repetição (Spam)
+const memoriaDeTentativas = new Map();
+
+function protetorAntiSpam(req, res, next) {
+    // Pega o IP de quem está fazendo a requisição
+    const ipDoUsuario = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+    const agora = Date.now();
+    const TEMPO_DE_BLOQUEIO = 10 * 60 * 1000; // 10 minutos de castigo
+    const LIMITE_MAXIMO = 5; // Máximo de 5 agendamentos gerados seguidos
+
+    if (!memoriaDeTentativas.has(ipDoUsuario)) {
+        memoriaDeTentativas.set(ipDoUsuario, { tentativas: 1, primeiroAcesso: agora });
+        return next();
+    }
+
+    const historico = memoriaDeTentativas.get(ipDoUsuario);
+
+    // Se o cliente já esperou os 10 minutos, o contador zera para ele
+    if (agora - historico.primeiroAcesso > TEMPO_DE_BLOQUEIO) {
+        memoriaDeTentativas.set(ipDoUsuario, { tentativas: 1, primeiroAcesso: agora });
+        return next();
+    }
+
+    historico.tentativas += 1;
+
+    // Se estourar o limite de 5 cliques em menos de 10 minutos, bloqueia o acesso à rota
+    if (historico.tentativas > LIMITE_MAXIMO) {
+        console.log(`🚨 ANTI-SPAM: IP ${ipDoUsuario} bloqueado por excesso de requisições.`);
+        return res.status(429).json({ 
+            erro: 'Muitas tentativas seguidas. Seu IP foi bloqueado temporariamente por 10 minutos para proteção do servidor.' 
+        });
+    }
+
+    next();
+}
+
+// =========================================================
+// INICIALIZAÇÃO DE SERVIÇOS (MP e Supabase)
+// =========================================================
 
 const clientMP = new MercadoPagoConfig({ accessToken: process.env.MERCADOPAGO_ACCESS_TOKEN });
 const payment = new Payment(clientMP);
@@ -64,7 +130,6 @@ connectToWhatsApp();
 
 // =========================================================
 // 🚀 FASE 2: O ROBÔ VIGILANTE (Lembrete Antifalta - 2h)
-// Roda a cada 15 minutos
 // =========================================================
 cron.schedule('*/15 * * * *', async () => {
     if (!supabase || !isConnected) return;
@@ -144,7 +209,6 @@ cron.schedule('0 9 * * *', async () => {
         ontem.setDate(ontem.getDate() - 1); // Pega o dia de ontem
         const dataOntem = ontem.toISOString().split('T')[0];
 
-        // Busca agendamentos de ontem concluídos que ainda não receberam feedback
         const { data: agendamentos, error } = await supabase
             .from('appointments')
             .select('*')
@@ -228,7 +292,6 @@ cron.schedule('0 * * * *', async () => {
 
 // =========================================================
 // 🚀 FASE 5: LEMBRETE UM DIA ANTES (24 Horas Antes)
-// Roda a cada 15 minutos procurando agendamentos para amanhã
 // =========================================================
 cron.schedule('*/15 * * * *', async () => {
     if (!supabase || !isConnected) return;
@@ -273,7 +336,6 @@ cron.schedule('*/15 * * * *', async () => {
                 const [result] = await sock.onWhatsApp(numeroWhatsApp);
                 
                 if (result && result.exists) {
-                    // 👇 MENSAGEM DO DIA ANTERIOR COM LOCALIZAÇÃO 👇
                     const mensagemLembrete = `Olá, *${agendamento.client}*! 👋\n\nPassando para lembrar que você tem um horário agendado para amanhã, dia *${dia}/${mes}* às *${horaFormatada}* com o profissional *${agendamento.barber}*.\n\n📍 *Localização:* Rua Exemplo, nº 123 - Bairro Centro\n\nEstamos preparando tudo para te receber! Se tiver algum imprevisto, avise a gente. ✂️`;
                     
                     await sock.sendMessage(result.jid, { text: mensagemLembrete });
@@ -313,7 +375,8 @@ app.get('/logout', async (req, res) => {
     setTimeout(() => { process.exit(0); }, 1000);
 });
 
-app.post('/gerar-cobranca', async (req, res) => {
+// 👇 ROTA BLINDADA COM O PROTETOR ANTI-SPAM 👇
+app.post('/gerar-cobranca', protetorAntiSpam, async (req, res) => {
     console.log("📥 Requisição do site RECEBIDA:", req.body);
     
     const { telefone, nome, valor } = req.body;
@@ -321,7 +384,6 @@ app.post('/gerar-cobranca', async (req, res) => {
         if (!sock || !isConnected) return res.status(500).json({ erro: 'Bot não conectado' });
         if (!telefone || !nome || !valor) return res.status(400).json({ erro: 'Dados ausentes' });
 
-        // 👇 CORREÇÃO DE DATA DEFINITIVA: Forçando fuso horário do Brasil (-03:00) 👇
         const amanha = new Date(Date.now() + 24 * 60 * 60 * 1000);
         const dataExpiracaoFormatada = amanha.toISOString().split('.')[0] + '.000-03:00';
 
@@ -330,7 +392,7 @@ app.post('/gerar-cobranca', async (req, res) => {
                 transaction_amount: Number(valor.replace(',', '.')),
                 description: `Serviço - ${nome}`,
                 payment_method_id: 'pix',
-                date_of_expiration: dataExpiracaoFormatada, // 👈 Nova data blindada
+                date_of_expiration: dataExpiracaoFormatada, 
                 payer: { email: 'cliente@barbearia.com' },
                 notification_url: 'https://bot-whatsapp-dibb.onrender.com/webhook-pagamento',
                 metadata: { telefone_cliente: telefone, nome_cliente: nome }
