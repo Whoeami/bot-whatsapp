@@ -63,13 +63,13 @@ async function connectToWhatsApp() {
 connectToWhatsApp();
 
 // =========================================================
-// 🚀 FASE 2: O ROBÔ VIGILANTE (Lembrete Antifalta)
+// 🚀 FASE 2: O ROBÔ VIGILANTE (Lembrete Antifalta - 2h)
 // Roda a cada 15 minutos
 // =========================================================
 cron.schedule('*/15 * * * *', async () => {
     if (!supabase || !isConnected) return;
 
-    console.log('⏰ [CRON] Buscando clientes para enviar lembrete de agendamento...');
+    console.log('⏰ [CRON] Buscando clientes para enviar lembrete de 2 horas...');
     
     try {
         const agora = new Date();
@@ -92,7 +92,7 @@ cron.schedule('*/15 * * * *', async () => {
         if (error) throw error;
 
         if (agendamentos && agendamentos.length > 0) {
-            console.log(`⏰ [CRON] Encontrei ${agendamentos.length} cliente(s) para avisar!`);
+            console.log(`⏰ [CRON] Encontrei ${agendamentos.length} cliente(s) para avisar (2h)!`);
 
             for (const agendamento of agendamentos) {
                 const telefoneCliente = agendamento.phone || agendamento.telefone || agendamento.whatsapp; 
@@ -115,7 +115,7 @@ cron.schedule('*/15 * * * *', async () => {
                     const mensagemLembrete = `Olá, *${agendamento.client}*! 💈\n\nPassando para lembrar que seu horário conosco está confirmado para hoje às *${horaFormatada}* com o profissional *${agendamento.barber}*.\n\nEstamos te esperando!`;
                     
                     await sock.sendMessage(result.jid, { text: mensagemLembrete });
-                    console.log(`✅ Lembrete enviado com sucesso para ${agendamento.client} (${horaFormatada})`);
+                    console.log(`✅ Lembrete de 2h enviado com sucesso para ${agendamento.client} (${horaFormatada})`);
 
                     await supabase
                         .from('appointments')
@@ -124,10 +124,10 @@ cron.schedule('*/15 * * * *', async () => {
                 }
             }
         } else {
-            console.log('⏰ [CRON] Nenhum lembrete pendente para as próximas 2 horas.');
+            console.log('⏰ [CRON] Nenhum lembrete de 2 horas pendente.');
         }
     } catch (e) {
-        console.error('❌ ERRO NO CRON DE LEMBRETE:', e);
+        console.error('❌ ERRO NO CRON DE LEMBRETE 2H:', e);
     }
 });
 
@@ -223,6 +223,73 @@ cron.schedule('0 * * * *', async () => {
         }
     } catch (e) {
         console.error('❌ ERRO NO CRON DO PIX:', e);
+    }
+});
+
+// =========================================================
+// 🚀 FASE 5: LEMBRETE UM DIA ANTES (24 Horas Antes)
+// Roda a cada 15 minutos procurando agendamentos para amanhã
+// =========================================================
+cron.schedule('*/15 * * * *', async () => {
+    if (!supabase || !isConnected) return;
+
+    console.log('📅 [CRON] Buscando clientes para enviar lembrete de 24 horas antes...');
+    
+    try {
+        const agora = new Date();
+        const daqui24Horas = new Date(agora.getTime() + 24 * 60 * 60 * 1000);
+        const daqui24HorasFim = new Date(daqui24Horas.getTime() + 15 * 60 * 1000);
+
+        const opcoesFuso = { timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' };
+        const formatadorBrasil = new Intl.DateTimeFormat('sv-SE', opcoesFuso);
+        
+        const daqui24HorasStr = formatadorBrasil.format(daqui24Horas).replace(' ', 'T');
+        const daqui24HorasFimStr = formatadorBrasil.format(daqui24HorasFim).replace(' ', 'T');
+
+        const { data: agendamentos, error } = await supabase
+            .from('appointments')
+            .select('*')
+            .in('status', ['aprovado', 'Confirmado', 'confirmado']) 
+            .eq('lembrete_24h_enviado', false) 
+            .gte('time', daqui24HorasStr)
+            .lte('time', daqui24HorasFimStr);
+
+        if (error) throw error;
+
+        if (agendamentos && agendamentos.length > 0) {
+            console.log(`📅 [CRON] Encontrei ${agendamentos.length} cliente(s) para o lembrete de amanhã!`);
+
+            for (const agendamento of agendamentos) {
+                const telefoneCliente = agendamento.phone || agendamento.telefone || agendamento.whatsapp; 
+                if (!telefoneCliente) continue;
+
+                const horaFormatada = agendamento.time.split('T')[1].substring(0, 5);
+                const dataCorte = agendamento.time.split('T')[0];
+                const [ano, mes, dia] = dataCorte.split('-');
+
+                let numeroWhatsApp = telefoneCliente.toString();
+                if (!numeroWhatsApp.startsWith('55')) numeroWhatsApp = '55' + numeroWhatsApp;
+
+                const [result] = await sock.onWhatsApp(numeroWhatsApp);
+                
+                if (result && result.exists) {
+                    // 👇 MENSAGEM DO DIA ANTERIOR COM LOCALIZAÇÃO 👇
+                    const mensagemLembrete = `Olá, *${agendamento.client}*! 👋\n\nPassando para lembrar que você tem um horário agendado para amanhã, dia *${dia}/${mes}* às *${horaFormatada}* com o profissional *${agendamento.barber}*.\n\n📍 *Localização:* Rua Exemplo, nº 123 - Bairro Centro\n\nEstamos preparando tudo para te receber! Se tiver algum imprevisto, avise a gente. ✂️`;
+                    
+                    await sock.sendMessage(result.jid, { text: mensagemLembrete });
+                    console.log(`✅ Lembrete de 24h enviado para ${agendamento.client} (${horaFormatada})`);
+
+                    await supabase
+                        .from('appointments')
+                        .update({ lembrete_24h_enviado: true })
+                        .eq('id', agendamento.id);
+                }
+            }
+        } else {
+            console.log('📅 [CRON] Nenhum lembrete de 24 horas pendente.');
+        }
+    } catch (e) {
+        console.error('❌ ERRO NO CRON DE LEMBRETE 24H:', e);
     }
 });
 
