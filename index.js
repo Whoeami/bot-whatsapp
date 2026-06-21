@@ -226,7 +226,6 @@ cron.schedule('0 * * * *', async () => {
     }
 });
 
-
 // =========================================================
 // PAINEL E ROTAS DA API
 // =========================================================
@@ -255,16 +254,16 @@ app.post('/gerar-cobranca', async (req, res) => {
         if (!sock || !isConnected) return res.status(500).json({ erro: 'Bot não conectado' });
         if (!telefone || !nome || !valor) return res.status(400).json({ erro: 'Dados ausentes' });
 
-        // 👇 CORREÇÃO DO FUSO HORÁRIO APLICADA AQUI (Validade de 24 horas) 👇
-        const dataExpiracao = new Date();
-        dataExpiracao.setHours(dataExpiracao.getHours() + 24);
+        // 👇 CORREÇÃO DE DATA DEFINITIVA: Forçando fuso horário do Brasil (-03:00) 👇
+        const amanha = new Date(Date.now() + 24 * 60 * 60 * 1000);
+        const dataExpiracaoFormatada = amanha.toISOString().split('.')[0] + '.000-03:00';
 
         const cobranca = await payment.create({
             body: {
                 transaction_amount: Number(valor.replace(',', '.')),
                 description: `Serviço - ${nome}`,
                 payment_method_id: 'pix',
-                date_of_expiration: dataExpiracao.toISOString(), // 👈 REGRA INJETADA
+                date_of_expiration: dataExpiracaoFormatada, // 👈 Nova data blindada
                 payer: { email: 'cliente@barbearia.com' },
                 notification_url: 'https://bot-whatsapp-dibb.onrender.com/webhook-pagamento',
                 metadata: { telefone_cliente: telefone, nome_cliente: nome }
