@@ -255,11 +255,16 @@ app.post('/gerar-cobranca', async (req, res) => {
         if (!sock || !isConnected) return res.status(500).json({ erro: 'Bot não conectado' });
         if (!telefone || !nome || !valor) return res.status(400).json({ erro: 'Dados ausentes' });
 
+        // 👇 CORREÇÃO DO FUSO HORÁRIO APLICADA AQUI (Validade de 24 horas) 👇
+        const dataExpiracao = new Date();
+        dataExpiracao.setHours(dataExpiracao.getHours() + 24);
+
         const cobranca = await payment.create({
             body: {
                 transaction_amount: Number(valor.replace(',', '.')),
                 description: `Serviço - ${nome}`,
                 payment_method_id: 'pix',
+                date_of_expiration: dataExpiracao.toISOString(), // 👈 REGRA INJETADA
                 payer: { email: 'cliente@barbearia.com' },
                 notification_url: 'https://bot-whatsapp-dibb.onrender.com/webhook-pagamento',
                 metadata: { telefone_cliente: telefone, nome_cliente: nome }
@@ -304,7 +309,7 @@ app.post('/webhook-pagamento', async (req, res) => {
                         .from('appointments') 
                         .update({ 
                             status: 'aprovado',
-                            phone: numeroWhatsApp // 🚀 AGORA ELE SALVA O TELEFONE SOZINHO AQUI!
+                            phone: numeroWhatsApp 
                         }) 
                         .eq('client', nomeCliente); 
                     if (error) console.error("❌ Erro ao atualizar o Supabase:", error);
