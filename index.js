@@ -21,7 +21,7 @@ app.use(express.urlencoded({ extended: true }));
 const URLsPermitidas = [
     'http://localhost:5173', // Permite que você teste no seu computador local (Vite)
     'https://bot-whatsapp-dibb.onrender.com', // O próprio servidor do Render
-    'https://suabarbearia.com.br' // ⚠️ TROQUE ISSO PELO LINK OFICIAL DO SEU SITE DEPOIS
+    'https://barbearia-sua-zeta.vercel.app' // 🚀 SEU LINK DA VERCEL FOI ADICIONADO AQUI
 ];
 
 app.use(cors({
