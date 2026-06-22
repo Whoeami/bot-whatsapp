@@ -460,5 +460,16 @@ app.post('/webhook-pagamento', async (req, res) => {
     res.status(200).send('OK');
 });
 
+// =========================================================
+// 🛡️ SISTEMA ANTI-QUEDA (Evita que o bot feche sozinho)
+// =========================================================
+process.on('uncaughtException', function (err) {
+    console.error('❌ Erro não tratado (uncaughtException):', err);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('❌ Rejeição não tratada (unhandledRejection):', reason);
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log('🚀 Servidor Reiniciado na porta ' + PORT));
