@@ -420,6 +420,7 @@ app.post('/gerar-cobranca', protetorAntiSpam, async (req, res) => {
     }
 });
 
+// 🔥 ROTA ATUALIZADA: MUDANÇA DE STATUS AUTOMÁTICA BLINDADA 🔥
 app.post('/webhook-pagamento', async (req, res) => {
     const acao = req.body?.action;
     const pagamentoId = req.body?.data?.id;
@@ -433,15 +434,20 @@ app.post('/webhook-pagamento', async (req, res) => {
                 if (!numeroWhatsApp.startsWith('55')) numeroWhatsApp = '55' + numeroWhatsApp;
                 
                 if (supabase) {
+                    const numeroLimpo = dados.metadata.telefone_cliente.toString().replace(/\D/g, '');
+
                     const { error } = await supabase
                         .from('appointments') 
                         .update({ 
-                            status: 'aprovado',
-                            phone: numeroWhatsApp 
+                            status: 'Confirmado',
+                            payment_method: 'Pix'
                         }) 
-                        .eq('client', nomeCliente); 
+                        .ilike('client', `%${nomeCliente.trim()}%`)
+                        .like('phone', `%${numeroLimpo.slice(-8)}%`)
+                        .eq('status', 'Pendente');
+
                     if (error) console.error("❌ Erro ao atualizar o Supabase:", error);
-                    else console.log(`✅ MEMÓRIA ATUALIZADA: Pagamento de ${nomeCliente} salvo e telefone preenchido no banco!`);
+                    else console.log(`✅ MEMÓRIA ATUALIZADA: Pagamento de ${nomeCliente} salvo e status alterado para Confirmado!`);
                 }
 
                 const [result] = await sock.onWhatsApp(numeroWhatsApp);
