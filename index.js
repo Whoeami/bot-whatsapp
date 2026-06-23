@@ -420,23 +420,33 @@ app.post('/gerar-cobranca', protetorAntiSpam, async (req, res) => {
     }
 });
 
-// 🔥 ROTA ATUALIZADA: MUDANÇA DE STATUS AUTOMÁTICA BLINDADA 🔥
+// 🔥 ROTA ATUALIZADA: MUDANÇA DE STATUS COM RASTREAMENTO (DEBUG) 🔥
 app.post('/webhook-pagamento', async (req, res) => {
-    const acao = req.body?.action;
+    console.log("🔔 [WEBHOOK] O Mercado Pago bateu na porta!", JSON.stringify(req.body));
+    
+    // O MP às vezes manda 'action' e às vezes 'type'
+    const acao = req.body?.action || req.body?.type;
     const pagamentoId = req.body?.data?.id;
     
-    if (acao === 'payment.created' && pagamentoId) {
+    if (pagamentoId) {
         try {
+            console.log(`🔍 [WEBHOOK] Buscando detalhes do pagamento ID: ${pagamentoId}...`);
             const dados = await payment.get({ id: pagamentoId });
+            
+            console.log(`💵 [WEBHOOK] Status real do pagamento: ${dados.status}`);
+            
             if (dados.status === 'approved') {
+                console.log("✅ [WEBHOOK] Pagamento aprovado! Lendo metadata:", dados.metadata);
+                
                 const nomeCliente = dados.metadata.nome_cliente;
                 let numeroWhatsApp = dados.metadata.telefone_cliente.toString();
                 if (!numeroWhatsApp.startsWith('55')) numeroWhatsApp = '55' + numeroWhatsApp;
                 
                 if (supabase) {
                     const numeroLimpo = dados.metadata.telefone_cliente.toString().replace(/\D/g, '');
+                    console.log(`🗄️ [SUPABASE] Tentando atualizar cliente: ${nomeCliente}, Fim do Telefone: ${numeroLimpo.slice(-8)}`);
 
-                    const { error } = await supabase
+                    const { data, error } = await supabase
                         .from('appointments') 
                         .update({ 
                             status: 'Confirmado',
@@ -444,19 +454,33 @@ app.post('/webhook-pagamento', async (req, res) => {
                         }) 
                         .ilike('client', `%${nomeCliente.trim()}%`)
                         .like('phone', `%${numeroLimpo.slice(-8)}%`)
-                        .eq('status', 'Pendente');
+                        .eq('status', 'Pendente')
+                        .select(); // Retorna a linha alterada para confirmarmos
 
-                    if (error) console.error("❌ Erro ao atualizar o Supabase:", error);
-                    else console.log(`✅ MEMÓRIA ATUALIZADA: Pagamento de ${nomeCliente} salvo e status alterado para Confirmado!`);
+                    if (error) {
+                        console.error("❌ [SUPABASE] Erro ao atualizar o banco:", error);
+                    } else if (data && data.length > 0) {
+                        console.log(`✅ [SUPABASE] SUCESSO! Linha atualizada no banco:`, data);
+                    } else {
+                        console.log(`⚠️ [SUPABASE] Nenhuma linha foi alterada. Os dados do cliente ou status não bateram.`);
+                    }
                 }
 
                 const [result] = await sock.onWhatsApp(numeroWhatsApp);
                 if (result && result.exists) {
                     await sock.sendMessage(result.jid, { text: 'Pagamento confirmado! 🎉 Seu agendamento está garantido e atualizado em nosso sistema.' });
+                    console.log(`📱 [WHATSAPP] Mensagem de confirmação enviada para ${numeroWhatsApp}`);
+                } else {
+                    console.log(`⚠️ [WHATSAPP] Número não encontrado no WhatsApp: ${numeroWhatsApp}`);
                 }
             }
-        } catch(e) { console.log(e); }
+        } catch(e) { 
+            console.error("❌ [WEBHOOK] ERRO CRÍTICO no processamento:", e); 
+        }
+    } else {
+        console.log("⚠️ [WEBHOOK] Requisição ignorada (não continha ID de pagamento válido).");
     }
+    
     res.status(200).send('OK');
 });
 
