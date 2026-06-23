@@ -21,7 +21,7 @@ app.use(express.urlencoded({ extended: true }));
 const URLsPermitidas = [
     'http://localhost:5173', // Permite que você teste no seu computador local (Vite)
     'https://bot-whatsapp-dibb.onrender.com', // O próprio servidor do Render
-    'https://barbearia-sua-zeta.vercel.app' // 🚀 SEU LINK DA VERCEL FOI ADICIONADO AQUI
+    'https://barbearia-sua-zeta.vercel.app' // 🚀 SEU LINK DA VERCEL
 ];
 
 app.use(cors({
@@ -420,14 +420,12 @@ app.post('/gerar-cobranca', protetorAntiSpam, async (req, res) => {
     }
 });
 
-// 🔥 ROTA ATUALIZADA: MUDANÇA DE STATUS COM RASTREAMENTO (DEBUG) 🔥
+// 🔥 ROTA DEFINITIVA: MUDANÇA DE STATUS + ANTI-DUPLICAÇÃO 🔥
 app.post('/webhook-pagamento', async (req, res) => {
     console.log("🔔 [WEBHOOK] O Mercado Pago bateu na porta!", JSON.stringify(req.body));
     
-    // Captura o ID de todas as formas possíveis que o MP costuma enviar (Webhook V1 ou IPN)
+    // Captura o ID de todas as formas possíveis
     let pagamentoId = req.body?.data?.id || req.body?.id;
-    
-    // Se o MP mandou no formato antigo 'resource', a gente limpa o texto e pega só os números
     if (!pagamentoId && req.body?.resource) {
         pagamentoId = req.body.resource.replace(/\D/g, ''); 
     }
@@ -442,15 +440,16 @@ app.post('/webhook-pagamento', async (req, res) => {
             if (dados.status === 'approved') {
                 console.log("✅ [WEBHOOK] Pagamento aprovado! Lendo metadata:", dados.metadata);
                 
-                const nomeCliente = dados.metadata?.nome_cliente;
                 let numeroWhatsApp = dados.metadata?.telefone_cliente?.toString();
                 
-                if (nomeCliente && numeroWhatsApp) {
+                if (numeroWhatsApp) {
                     if (!numeroWhatsApp.startsWith('55')) numeroWhatsApp = '55' + numeroWhatsApp;
                     
+                    let linhaFoiAtualizada = false; // 🔒 NOSSA TRAVA DE SEGURANÇA
+
                     if (supabase) {
                         const numeroLimpo = numeroWhatsApp.replace(/\D/g, '');
-                        console.log(`🗄️ [SUPABASE] Tentando atualizar cliente: ${nomeCliente}, Fim do Telefone: ${numeroLimpo.slice(-8)}`);
+                        console.log(`🗄️ [SUPABASE] Buscando agendamento Pendente para o telefone: ${numeroLimpo.slice(-8)}`);
 
                         const { data, error } = await supabase
                             .from('appointments') 
@@ -458,34 +457,34 @@ app.post('/webhook-pagamento', async (req, res) => {
                                 status: 'Confirmado',
                                 payment_method: 'Pix'
                             }) 
-                            .ilike('client', `%${nomeCliente.trim()}%`) // Ignora maiúsculas/minúsculas no nome
-                            .like('phone', `%${numeroLimpo.slice(-8)}%`) // Pega os últimos 8 números
-                            .ilike('status', 'pendente') // 🔥 A BUSCA RELAXADA: Aceita "Pendente", "pendente", etc.
+                            // ✂️ Removemos a busca por nome para evitar falhas de digitação
+                            .like('phone', `%${numeroLimpo.slice(-8)}%`) 
+                            .ilike('status', 'pendente')
                             .select(); 
 
                         if (error) {
                             console.error("❌ [SUPABASE] Erro ao atualizar o banco:", error);
                         } else if (data && data.length > 0) {
                             console.log(`✅ [SUPABASE] SUCESSO! Linha atualizada no banco:`, data);
+                            linhaFoiAtualizada = true; // 🟢 Liberou o envio do WhatsApp!
                         } else {
-                            console.log(`⚠️ [SUPABASE] Nenhuma linha foi alterada. Os dados do cliente ou status não bateram.`);
+                            console.log(`⚠️ [SUPABASE] Nenhuma linha alterada. (Ou o número não existe, ou este webhook é duplicado e já foi processado).`);
                         }
                     }
 
-                    const [result] = await sock.onWhatsApp(numeroWhatsApp);
-                    if (result && result.exists) {
-                        await sock.sendMessage(result.jid, { text: 'Pagamento confirmado! 🎉 Seu agendamento está garantido e atualizado em nosso sistema.' });
-                        console.log(`📱 [WHATSAPP] Mensagem de confirmação enviada para ${numeroWhatsApp}`);
+                    // 📱 SÓ ENVIA O WHATSAPP SE O BANCO FOI ATUALIZADO NESTA REQUISIÇÃO
+                    if (linhaFoiAtualizada) {
+                        const [result] = await sock.onWhatsApp(numeroWhatsApp);
+                        if (result && result.exists) {
+                            await sock.sendMessage(result.jid, { text: 'Pagamento confirmado! 🎉 Seu agendamento está garantido e atualizado em nosso sistema.' });
+                            console.log(`📱 [WHATSAPP] Mensagem ÚNICA enviada para ${numeroWhatsApp}`);
+                        }
                     }
-                } else {
-                    console.log("⚠️ [WEBHOOK] Metadata ausente! O pagamento foi feito, mas o MP não devolveu o nome/telefone.");
                 }
             }
         } catch(e) { 
             console.error("❌ [WEBHOOK] ERRO CRÍTICO no processamento:", e); 
         }
-    } else {
-        console.log("⚠️ [WEBHOOK] Requisição ignorada (não continha ID de pagamento válido).");
     }
     
     res.status(200).send('OK');
