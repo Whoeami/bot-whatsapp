@@ -424,9 +424,13 @@ app.post('/gerar-cobranca', protetorAntiSpam, async (req, res) => {
 app.post('/webhook-pagamento', async (req, res) => {
     console.log("🔔 [WEBHOOK] O Mercado Pago bateu na porta!", JSON.stringify(req.body));
     
-    // O MP às vezes manda 'action' e às vezes 'type'
-    const acao = req.body?.action || req.body?.type;
-    const pagamentoId = req.body?.data?.id;
+    // Captura o ID de todas as formas possíveis que o MP costuma enviar (Webhook V1 ou IPN)
+    let pagamentoId = req.body?.data?.id || req.body?.id;
+    
+    // Se o MP mandou no formato antigo 'resource', a gente limpa o texto e pega só os números
+    if (!pagamentoId && req.body?.resource) {
+        pagamentoId = req.body.resource.replace(/\D/g, ''); 
+    }
     
     if (pagamentoId) {
         try {
@@ -438,40 +442,43 @@ app.post('/webhook-pagamento', async (req, res) => {
             if (dados.status === 'approved') {
                 console.log("✅ [WEBHOOK] Pagamento aprovado! Lendo metadata:", dados.metadata);
                 
-                const nomeCliente = dados.metadata.nome_cliente;
-                let numeroWhatsApp = dados.metadata.telefone_cliente.toString();
-                if (!numeroWhatsApp.startsWith('55')) numeroWhatsApp = '55' + numeroWhatsApp;
+                const nomeCliente = dados.metadata?.nome_cliente;
+                let numeroWhatsApp = dados.metadata?.telefone_cliente?.toString();
                 
-                if (supabase) {
-                    const numeroLimpo = dados.metadata.telefone_cliente.toString().replace(/\D/g, '');
-                    console.log(`🗄️ [SUPABASE] Tentando atualizar cliente: ${nomeCliente}, Fim do Telefone: ${numeroLimpo.slice(-8)}`);
+                if (nomeCliente && numeroWhatsApp) {
+                    if (!numeroWhatsApp.startsWith('55')) numeroWhatsApp = '55' + numeroWhatsApp;
+                    
+                    if (supabase) {
+                        const numeroLimpo = numeroWhatsApp.replace(/\D/g, '');
+                        console.log(`🗄️ [SUPABASE] Tentando atualizar cliente: ${nomeCliente}, Fim do Telefone: ${numeroLimpo.slice(-8)}`);
 
-                    const { data, error } = await supabase
-                        .from('appointments') 
-                        .update({ 
-                            status: 'Confirmado',
-                            payment_method: 'Pix'
-                        }) 
-                        .ilike('client', `%${nomeCliente.trim()}%`)
-                        .like('phone', `%${numeroLimpo.slice(-8)}%`)
-                        .eq('status', 'Pendente')
-                        .select(); // Retorna a linha alterada para confirmarmos
+                        const { data, error } = await supabase
+                            .from('appointments') 
+                            .update({ 
+                                status: 'Confirmado',
+                                payment_method: 'Pix'
+                            }) 
+                            .ilike('client', `%${nomeCliente.trim()}%`) // Ignora maiúsculas/minúsculas no nome
+                            .like('phone', `%${numeroLimpo.slice(-8)}%`) // Pega os últimos 8 números
+                            .ilike('status', 'pendente') // 🔥 A BUSCA RELAXADA: Aceita "Pendente", "pendente", etc.
+                            .select(); 
 
-                    if (error) {
-                        console.error("❌ [SUPABASE] Erro ao atualizar o banco:", error);
-                    } else if (data && data.length > 0) {
-                        console.log(`✅ [SUPABASE] SUCESSO! Linha atualizada no banco:`, data);
-                    } else {
-                        console.log(`⚠️ [SUPABASE] Nenhuma linha foi alterada. Os dados do cliente ou status não bateram.`);
+                        if (error) {
+                            console.error("❌ [SUPABASE] Erro ao atualizar o banco:", error);
+                        } else if (data && data.length > 0) {
+                            console.log(`✅ [SUPABASE] SUCESSO! Linha atualizada no banco:`, data);
+                        } else {
+                            console.log(`⚠️ [SUPABASE] Nenhuma linha foi alterada. Os dados do cliente ou status não bateram.`);
+                        }
                     }
-                }
 
-                const [result] = await sock.onWhatsApp(numeroWhatsApp);
-                if (result && result.exists) {
-                    await sock.sendMessage(result.jid, { text: 'Pagamento confirmado! 🎉 Seu agendamento está garantido e atualizado em nosso sistema.' });
-                    console.log(`📱 [WHATSAPP] Mensagem de confirmação enviada para ${numeroWhatsApp}`);
+                    const [result] = await sock.onWhatsApp(numeroWhatsApp);
+                    if (result && result.exists) {
+                        await sock.sendMessage(result.jid, { text: 'Pagamento confirmado! 🎉 Seu agendamento está garantido e atualizado em nosso sistema.' });
+                        console.log(`📱 [WHATSAPP] Mensagem de confirmação enviada para ${numeroWhatsApp}`);
+                    }
                 } else {
-                    console.log(`⚠️ [WHATSAPP] Número não encontrado no WhatsApp: ${numeroWhatsApp}`);
+                    console.log("⚠️ [WEBHOOK] Metadata ausente! O pagamento foi feito, mas o MP não devolveu o nome/telefone.");
                 }
             }
         } catch(e) { 
