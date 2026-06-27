@@ -76,7 +76,7 @@ if (supabaseUrl && supabaseKey) {
 
 let sock;
 let isConnected = false;
-const pixLembretesEnviados = new Set(); // 🔒 Trava inteligente anti-spam para o Pix Esquecido
+const pixLembretesEnviados = new Set(); 
 
 async function connectToWhatsApp() {
     const { state, saveCreds } = await useMultiFileAuthState('auth_info_RESET_SABADO');
@@ -105,7 +105,6 @@ connectToWhatsApp();
 // ⏰ AGENDADORES CRON (LEMBRETES E FEEDBACK)
 // =========================================================
 
-// Lembrete Antifalta - 2 Horas Antes
 cron.schedule('*/15 * * * *', async () => {
     if (!supabase || !isConnected) return;
     try {
@@ -142,7 +141,6 @@ cron.schedule('*/15 * * * *', async () => {
     } catch (e) { console.error('Erro Cron 2h:', e); }
 });
 
-// Lembrete 24 Horas Antes
 cron.schedule('*/15 * * * *', async () => {
     if (!supabase || !isConnected) return;
     try {
@@ -182,7 +180,6 @@ cron.schedule('*/15 * * * *', async () => {
     } catch (e) { console.error('Erro Cron 24h:', e); }
 });
 
-// Pedido de Feedback (9h da manhã)
 cron.schedule('0 9 * * *', async () => {
     if (!supabase || !isConnected) return;
     try {
@@ -218,7 +215,6 @@ cron.schedule('0 9 * * *', async () => {
     } catch (e) { console.error('Erro Cron Feedback:', e); }
 });
 
-// 🔒 ROBÔ DO PIX ESQUECIDO (Modificado com trava de envio único)
 cron.schedule('0 * * * *', async () => {
     if (!supabase || !isConnected) return;
     try {
@@ -231,7 +227,6 @@ cron.schedule('0 * * * *', async () => {
 
         if (agendamentos && agendamentos.length > 0) {
             for (const agendamento of agendamentos) {
-                // Se esse agendamento já foi avisado nesta sessão, ignora e pula pro próximo (Fim do Spam de hora em hora)
                 if (pixLembretesEnviados.has(agendamento.id)) continue;
 
                 const telefoneCliente = agendamento.phone || agendamento.telefone || agendamento.whatsapp;
@@ -244,7 +239,7 @@ cron.schedule('0 * * * *', async () => {
                 const [result] = await sock.onWhatsApp(numeroWhatsApp);
                 if (result && result.exists) {
                     await sock.sendMessage(result.jid, { text: msg });
-                    pixLembretesEnviados.add(agendamento.id); // Salva na memória para nunca mais repetir
+                    pixLembretesEnviados.add(agendamento.id);
                     console.log(`💰 Pix esquecido lembrado uma única vez para ${agendamento.client}`);
                 }
             }
@@ -262,7 +257,6 @@ app.post('/gerar-cobranca', protetorAntiSpam, async (req, res) => {
     try {
         if (!sock || !isConnected) return res.status(500).json({ erro: 'Serviço de notificações temporariamente offline.' });
         
-        // 1. Busca a carteira de repasse do barbeiro no Supabase
         const { data: settings } = await supabase.from('site_settings').select('asaas_wallet_id').eq('id', 1).single();
         const barberWalletId = settings?.asaas_wallet_id;
 
@@ -270,7 +264,6 @@ app.post('/gerar-cobranca', protetorAntiSpam, async (req, res) => {
             return res.status(400).json({ erro: 'Este estabelecimento ainda não concluiu a configuração de recebimentos.' });
         }
 
-        // 2. Cria ou Localiza o Cliente dentro do Asaas
         const customerResponse = await fetch('https://api.asaas.com/v3/customers', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'access_token': process.env.ASAAS_API_KEY },
@@ -282,7 +275,6 @@ app.post('/gerar-cobranca', protetorAntiSpam, async (req, res) => {
         const amanha = new Date(Date.now() + 24 * 60 * 60 * 1000);
         const dataVencimento = amanha.toISOString().split('T')[0];
 
-        // 3. Monta a estrutura base da cobrança com o Split Inteligente de 3%
         const paymentPayload = {
             customer: asaasCustomerId,
             billingType: metodoPagamento === 'PIX' ? 'PIX' : 'CREDIT_CARD',
@@ -292,12 +284,11 @@ app.post('/gerar-cobranca', protetorAntiSpam, async (req, res) => {
             split: [
                 {
                     walletId: barberWalletId,
-                    percentualValue: 100 - Number(taxaPlataforma || 3) // 97% vai direto pro barbeiro, 3% fica na sua Conta Mãe
+                    percentualValue: 100 - Number(taxaPlataforma || 3)
                 }
             ]
         };
 
-        // Se for cartão de crédito, injeta os parâmetros confidenciais e os dados do titular
         if (metodoPagamento === 'CREDIT_CARD' && cartao) {
             const finalCartao = cartao.number.slice(-4);
             paymentPayload.creditCard = {
@@ -311,12 +302,11 @@ app.post('/gerar-cobranca', protetorAntiSpam, async (req, res) => {
                 name: cartao.name,
                 email: 'cliente@barbearia.com',
                 cpfCnpj: cartao.cpf,
-                postalCode: '89515000', // Padrão de preenchimento
+                postalCode: '89515000',
                 addressNumber: '10',
                 phone: telefoneCliente
             };
 
-            // Envia a cobrança de Cartão para o Asaas
             const asaasPaymentRes = await fetch('https://api.asaas.com/v3/payments', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'access_token': process.env.ASAAS_API_KEY },
@@ -330,14 +320,12 @@ app.post('/gerar-cobranca', protetorAntiSpam, async (req, res) => {
             const [result] = await sock.onWhatsApp(numeroWhatsApp);
 
             if (!asaasPaymentRes.ok || paymentData.errors) {
-                // Notifica a falha no WhatsApp de forma elegante
                 if (result && result.exists) {
                     await sock.sendMessage(result.jid, { text: `⚠️ Olá, *${nomeCliente}*.\n\nHouve uma instabilidade no processamento do seu cartão com final *${finalCartao}*.\n\nPor favor, tente novamente no site utilizando outro cartão ou alterne para a opção Pix.` });
                 }
                 throw new Error(paymentData.errors?.[0]?.description || 'Recusa do emissor do cartão.');
             }
 
-            // Notifica o sucesso do Cartão no WhatsApp
             if (result && result.exists) {
                 await sock.sendMessage(result.jid, { text: `💳 *Pagamento Confirmado!*\n\nOlá, *${nomeCliente}*, seu pagamento no cartão com final *${finalCartao}* foi aprovado com sucesso.\n\nSeu horário já está garantido na agenda! ✂️` });
             }
@@ -345,7 +333,6 @@ app.post('/gerar-cobranca', protetorAntiSpam, async (req, res) => {
             return res.json({ sucesso: true });
         } 
         
-        // Se for PIX, cria a intenção e busca as chaves de imagem
         else {
             const asaasPaymentRes = await fetch('https://api.asaas.com/v3/payments', {
                 method: 'POST',
@@ -354,14 +341,12 @@ app.post('/gerar-cobranca', protetorAntiSpam, async (req, res) => {
             });
             const paymentData = await asaasPaymentRes.json();
 
-            // Busca os dados do QR Code do Pix gerado
             const pixDataRes = await fetch(`https://api.asaas.com/v3/payments/${paymentData.id}/pixQrCode`, {
                 method: 'GET',
                 headers: { 'access_token': process.env.ASAAS_API_KEY }
             });
             const pixData = await pixDataRes.json();
 
-            // Retorna direto para a tela do site tratar e exibir (Nenhuma mensagem é enviada ao WhatsApp ainda)
             return res.json({
                 sucesso: true,
                 qrCodeImage: pixData.encodedImage,
@@ -376,16 +361,16 @@ app.post('/gerar-cobranca', protetorAntiSpam, async (req, res) => {
 });
 
 // =========================================================
-// 🔔 WEBHOOK DE CONFIRMAÇÃO EM PRODUÇÃO (ASAAS)
+// 🔔 WEBHOOK DE CONFIRMAÇÃO + EMISSÃO DE NOTA FISCAL (ASAAS)
 // =========================================================
 
 app.post('/webhook-pagamento', async (req, res) => {
-    const { event, payment } = req.body;
+    const { event, payment, invoice } = req.body;
     console.log(`🔔 [ASAAS WEBHOOK] Evento recebido: ${event}`);
 
+    // LOGICA 1: EMISSÃO DE NOTA APÓS PAGAMENTO
     if (event === 'PAYMENT_RECEIVED' || event === 'PAYMENT_CONFIRMED') {
         try {
-            // Busca os dados do comprador para achar o agendamento correspondente
             const clientRes = await fetch(`https://api.asaas.com/v3/customers/${payment.customer}`, {
                 method: 'GET',
                 headers: { 'access_token': process.env.ASAAS_API_KEY }
@@ -412,14 +397,31 @@ app.post('/webhook-pagamento', async (req, res) => {
                             .ilike('status', 'pendente')
                             .select();
 
-                        // Dispara a mensagem definitiva se foi a primeira confirmação da vaga
                         if (atualizado && atualizado.length > 0) {
+                            console.log(`🧾 [NOTA FISCAL] Solicitando emissão para o cliente ${alvo.client}...`);
+                            
+                            try {
+                                await fetch('https://api.asaas.com/v3/invoices', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json', 'access_token': process.env.ASAAS_API_KEY },
+                                    body: JSON.stringify({
+                                        payment: payment.id,
+                                        customer: payment.customer,
+                                        serviceDescription: `Serviço de Barbearia - ${alvo.service || 'Corte'}`,
+                                        value: payment.value,
+                                        effectiveDate: new Date().toISOString().split('T')[0],
+                                        taxes: { retainIss: false, iss: 0, cofins: 0, csll: 0, inss: 0, ir: 0, pis: 0 }
+                                    })
+                                });
+                            } catch (erroNota) {
+                                console.error('❌ Erro ao solicitar emissão da nota:', erroNota);
+                            }
+
                             let numeroWhatsApp = telefoneLimpo;
                             if (!numeroWhatsApp.startsWith('55')) numeroWhatsApp = '55' + numeroWhatsApp;
-
                             const [result] = await sock.onWhatsApp(numeroWhatsApp);
                             if (result && result.exists) {
-                                await sock.sendMessage(result.jid, { text: 'Pagamento confirmado! 🎉 Seu agendamento está garantido e confirmado com sucesso em nosso sistema.' });
+                                await sock.sendMessage(result.jid, { text: 'Pagamento confirmado! 🎉 Seu agendamento está garantido e a Nota Fiscal está sendo gerada.' });
                             }
                         }
                     }
@@ -429,6 +431,32 @@ app.post('/webhook-pagamento', async (req, res) => {
             console.error("Erro ao liquidar webhook Asaas:", err);
         }
     }
+
+    // LOGICA 2: ENVIO DA NOTA APÓS AUTORIZAÇÃO
+    if (event === 'INVOICE_AUTHORIZED') {
+        try {
+            const pdfUrl = invoice.pdfUrl;
+            const clientRes = await fetch(`https://api.asaas.com/v3/customers/${invoice.customer}`, {
+                method: 'GET',
+                headers: { 'access_token': process.env.ASAAS_API_KEY }
+            });
+            const clientData = await clientRes.json();
+            
+            let numeroWhatsApp = (clientData.mobilePhone || '').replace(/\D/g, '');
+            if (numeroWhatsApp) {
+                if (!numeroWhatsApp.startsWith('55')) numeroWhatsApp = '55' + numeroWhatsApp;
+                const [result] = await sock.onWhatsApp(numeroWhatsApp);
+                if (result && result.exists) {
+                    await sock.sendMessage(result.jid, { 
+                        text: `🧾 *Sua Nota Fiscal Chegou!*\n\nAqui está o link para acessar e baixar a sua Nota Fiscal de Serviços:\n\n🔗 ${pdfUrl}` 
+                    });
+                }
+            }
+        } catch (err) {
+            console.error("Erro ao enviar PDF da nota:", err);
+        }
+    }
+
     res.status(200).send('OK');
 });
 
